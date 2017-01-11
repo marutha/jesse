@@ -155,3 +155,24 @@ itemsExtra(Config) ->
 
 remoteRefExtra(Config) ->
   do_test("remoteRefExtra", Config).
+
+anyOfOneOfAllowedErrorsZeroExtra(Config) ->
+  do_test("anyOfOneOfAllowedErrorsZeroExtra", Config).
+
+anyOfOneOfAllowedErrorsOneExtra(Config) ->
+  do_test("anyOfOneOfAllowedErrorsOneExtra", Config).
+
+anyOfOneOfAllowedErrorsInfinityExtra(Config) ->
+  do_test("anyOfOneOfAllowedErrorsInfinityExtra", Config).
+
+unicodePatternProperties(Config) ->
+  do_test("unicodePatternProperties", Config).
+
+dateTimeFormat(Config) ->
+  do_test("dateTimeFormat", Config).
+
+ipv4Format(Config) ->
+  do_test("ipv4Format", Config).
+
+ipv6Format(Config) ->
+  do_test("ipv6Format", Config).

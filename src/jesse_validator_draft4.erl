@@ -245,10 +245,11 @@ check_value(Value, [{?ONEOF, Schemas} | Attrs], State) ->
 check_value(Value, [{?NOT, Schema} | Attrs], State) ->
     NewState = check_not(Value, Schema, State),
     check_value(Value, Attrs, NewState);
-check_value(Value, [{?REF, Reference} | Attrs], State) ->
-    NewState = resolve_ref(Value, Reference, State),
-    NewState2 = check_value(Value, Attrs, NewState),
-    undo_resolve_ref(NewState2, State);
+check_value(Value, [{?REF, RefSchemaURI}], State) ->
+  {NewState0, Schema} = resolve_ref(RefSchemaURI, State),
+  NewState =
+    jesse_schema_validator:validate_with_state(Schema, Value, NewState0),
+  undo_resolve_ref(NewState, State);
 check_value(_Value, [], State) ->
   State;
 check_value(Value, [_Attr | Attrs], State) ->
@@ -490,7 +491,7 @@ get_additional_properties(Value, Properties, PatternProperties) ->
 %% @private
 filter_extra_names(Pattern, ExtraNames) ->
   Filter = fun(ExtraName) ->
-               case re:run(ExtraName, Pattern, [{capture, none}]) of
+               case re:run(ExtraName, Pattern, [{capture, none}, unicode]) of
                  match   -> false;
                  nomatch -> true
                end
@@ -944,8 +945,35 @@ check_enum(Value, Enum, State) ->
 
 %% @doc format
 %% Used for semantic validation.
-%% TODO: Implement the standard formats
 %% @private
+check_format(Value, _Format = <<"date-time">>, State) when is_binary(Value) ->
+  case valid_datetime(Value) of
+    true  -> State;
+    false -> handle_data_invalid(?wrong_format, Value, State)
+  end;
+check_format(Value, _Format = <<"email">>, State) when is_binary(Value) ->
+  case re:run(Value, <<"^[^@]+@[^@]+$">>, [{capture, none}, unicode]) of
+    match   -> State;
+    nomatch -> handle_data_invalid(?wrong_format, Value, State)
+  end;
+check_format(Value, _Format = <<"hostname">>, State) when is_binary(Value) ->
+  %% not yet supported
+  State;
+check_format(Value, _Format = <<"ipv4">>, State) when is_binary(Value) ->
+  %% avoiding inet:parse_ipv4strict_address to maintain R15 compatibility
+  case inet_parse:ipv4strict_address(binary_to_list(Value)) of
+    {ok, _IPv4Address} -> State;
+    {error, einval}    -> handle_data_invalid(?wrong_format, Value, State)
+  end;
+check_format(Value, _Format = <<"ipv6">>, State) when is_binary(Value) ->
+  %% avoiding inet:parse_ipv6strict_address to maintain R15 compatibility
+  case inet_parse:ipv6strict_address(binary_to_list(Value)) of
+    {ok, _IPv6Address} -> State;
+    {error, einval}    -> handle_data_invalid(?wrong_format, Value, State)
+  end;
+check_format(Value, _Format = <<"uri">>, State) when is_binary(Value) ->
+  %% not yet supported
+  State;
 check_format(_Value, _Format, State) ->
   State.
 
@@ -988,17 +1016,20 @@ check_multiple_of(_Value, _MultipleOf, State) ->
 %%
 %% @private
 check_required(Value, [_ | _] = Required, State) ->
-  IsValid = lists:all( fun(PropertyName) ->
-                           get_value(PropertyName, Value) =/= ?not_found
-                       end
-                     , Required
-                     ),
-    case IsValid of
-      true  -> State;
-      false -> handle_data_invalid(?missing_required_property, Value, State)
-    end;
+  check_required_values(Value, Required, State);
 check_required(_Value, _InvalidRequired, State) ->
-    handle_schema_invalid(?wrong_required_array, State).
+  handle_schema_invalid(?wrong_required_array, State).
+
+check_required_values(_Value, [], State) -> State;
+check_required_values(Value, [PropertyName | Required], State) ->
+  case get_value(PropertyName, Value) =/= ?not_found of
+    'false' ->
+      NewState =
+        handle_data_invalid(?missing_required_property, PropertyName, State),
+      check_required_values(Value, Required, NewState);
+    'true' ->
+      check_required_values(Value, Required, State)
+  end.
 
 %% @doc 5.4.1. maxProperties
 %%
@@ -1103,7 +1134,11 @@ check_any_of_(Value, [], State) ->
   handle_data_invalid(?any_schemas_not_valid, Value, State);
 check_any_of_(Value, [Schema | Schemas], State) ->
   case validate_schema(Value, Schema, State) of
-    {true, NewState} -> NewState;
+    {true, NewState} ->
+        case jesse_state:get_error_list(NewState) of
+            [] -> NewState;
+            _  -> check_any_of_(Value, Schemas, State)
+        end;
     {false, _} -> check_any_of_(Value, Schemas, State)
   end.
 
@@ -1137,7 +1172,10 @@ check_one_of_(Value, _Schemas, State, Valid) when Valid > 1 ->
 check_one_of_(Value, [Schema | Schemas], State, Valid) ->
   case validate_schema(Value, Schema, State) of
     {true, NewState} ->
-      check_one_of_(Value, Schemas, NewState, Valid + 1);
+        case jesse_state:get_error_list(NewState) of
+            [] -> check_one_of_(Value, Schemas, NewState, Valid + 1);
+            _  -> check_one_of_(Value, Schemas, State, Valid)
+        end;
     {false, _} ->
       check_one_of_(Value, Schemas, State, Valid)
   end.
@@ -1185,10 +1223,10 @@ validate_schema(Value, Schema, State0) ->
 %% @doc Resolve a JSON reference
 %% The "id" keyword is taken care of behind the scenes in jesse_state.
 %% @private
-resolve_ref(Value, Reference, State) ->
+resolve_ref(Reference, State) ->
   NewState = jesse_state:resolve_ref(State, Reference),
   Schema = get_current_schema(NewState),
-  jesse_schema_validator:validate_with_state(Schema, Value, NewState).
+  {NewState, Schema}.
 
 undo_resolve_ref(State, OriginalState) ->
   jesse_state:undo_resolve_ref(State, OriginalState).
@@ -1300,3 +1338,12 @@ add_to_path(State, Property) ->
 %% @private
 remove_last_from_path(State) ->
   jesse_state:remove_last_from_path(State).
+
+%% @private
+valid_datetime(DateTimeBin) ->
+  case rfc3339:parse(DateTimeBin) of
+    {ok, _} ->
+      true;
+    _ ->
+      false
+  end.
