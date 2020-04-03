@@ -21,6 +21,13 @@
 %% @end
 %%%=============================================================================
 
+%% Maps conditional compilation
+-ifdef(erlang_deprecated_types).
+-define(IF_MAPS(Exp), ).
+-else.
+-define(IF_MAPS(Exp), Exp).
+-endif.
+
 %% Constant definitions for Json schema keywords
 -define(SCHEMA,               <<"$schema">>).
 -define(TYPE,                 <<"type">>).
@@ -74,21 +81,25 @@
 -define(default_error_handler_fun, fun jesse_error:default_error_handler/3).
 
 %% Constant definitions for schema errors
--define(schema_invalid,              'schema_invalid').
 -define(invalid_dependency,          'invalid_dependency').
+-define(only_ref_allowed,            'only_ref_allowed').
+-define(schema_error,                'schema_error').
+-define(schema_invalid,              'schema_invalid').
+-define(schema_not_found,            'schema_not_found').
 -define(schema_unsupported,          'schema_unsupported').
 -define(wrong_all_of_schema_array,   'wrong_all_of_schema_array').
 -define(wrong_any_of_schema_array,   'wrong_any_of_schema_array').
--define(wrong_one_of_schema_array,   'wrong_one_of_schema_array').
 -define(wrong_max_properties,        'wrong_max_properties').
 -define(wrong_min_properties,        'wrong_min_properties').
 -define(wrong_multiple_of,           'wrong_multiple_of').
+-define(wrong_one_of_schema_array,   'wrong_one_of_schema_array').
 -define(wrong_required_array,        'wrong_required_array').
--define(wrong_type_items,            'wrong_type_items').
 -define(wrong_type_dependency,       'wrong_type_dependency').
+-define(wrong_type_items,            'wrong_type_items').
 -define(wrong_type_specification,    'wrong_type_specification').
 
 %% Constant definitions for data errors
+-define(data_error,                  'data_error').
 -define(data_invalid,                'data_invalid').
 -define(missing_id_field,            'missing_id_field').
 -define(missing_required_property,   'missing_required_property').
@@ -98,6 +109,7 @@
 -define(no_extra_items_allowed,      'no_extra_items_allowed').
 -define(not_allowed,                 'not_allowed').
 -define(not_unique,                  'not_unique').
+-define(not_in_enum,                 'not_in_enum').
 -define(not_in_range,                'not_in_range').
 -define(not_divisible,               'not_divisible').
 -define(wrong_type,                  'wrong_type').
@@ -112,13 +124,8 @@
 -define(not_one_schema_valid,        'not_one_schema_valid').
 -define(not_schema_valid,            'not_schema_valid').
 -define(wrong_not_schema,            'wrong_not_schema').
+-define(external,                    'external').
 
 %%
--define(not_found, not_found).
-
-%% Maps conditional compilation
--ifdef(erlang_deprecated_types).
--define(IF_MAPS(Exp), ).
--else.
--define(IF_MAPS(Exp), Exp).
--endif.
+-define(not_found,                   'not_found').
+-define(infinity,                    'infinity').

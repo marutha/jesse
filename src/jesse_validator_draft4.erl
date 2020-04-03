@@ -32,7 +32,7 @@
 
 
 -type schema_error() :: ?invalid_dependency
-                      | ?not_multiple_of
+                      | ?only_ref_allowed
                       | ?schema_invalid
                       | ?wrong_all_of_schema_array
                       | ?wrong_any_of_schema_array
@@ -56,6 +56,7 @@
                     | ?no_extra_properties_allowed
                     | ?no_match
                     | ?not_found
+                    | ?not_in_enum
                     | ?not_in_range
                     | ?not_multiple_of
                     | ?not_one_schema_valid
@@ -64,7 +65,8 @@
                     | ?too_many_properties
                     | ?wrong_length
                     | ?wrong_size
-                    | ?wrong_type.
+                    | ?wrong_type
+                    | ?external.
 
 -type data_error_type() :: data_error()
                          | {data_error(), binary()}.
@@ -72,10 +74,17 @@
 %%% API
 %% @doc Goes through attributes of the given schema `JsonSchema' and
 %% validates the value `Value' against them.
--spec check_value( Value      :: any()
-                 , JsonSchema :: jesse:json_term()
-                 , State      :: jesse_state:state()
+-spec check_value( Value :: jesse:json_term()
+                 , JsonSchema :: jesse:schema()
+                 , State :: jesse_state:state()
                  ) -> jesse_state:state() | no_return().
+check_value(Value, [{?REF, RefSchemaURI} | Attrs], State) ->
+  case Attrs of
+    [] ->
+      validate_ref(Value, RefSchemaURI, State);
+    _ ->
+      handle_schema_invalid(?only_ref_allowed, State)
+  end;
 check_value(Value, [{?TYPE, Type} | Attrs], State) ->
   NewState = check_type(Value, Type, State),
   check_value(Value, Attrs, NewState);
@@ -222,36 +231,31 @@ check_value(Value, [{?MULTIPLEOF, Multiple} | Attrs], State) ->
              end,
   check_value(Value, Attrs, NewState);
 check_value(Value, [{?MAXPROPERTIES, MaxProperties} | Attrs], State) ->
-    NewState = case jesse_lib:is_json_object(Value) of
-                   true  -> check_max_properties(Value, MaxProperties, State);
-                   false -> State
-               end,
-    check_value(Value, Attrs, NewState);
+  NewState = case jesse_lib:is_json_object(Value) of
+               true  -> check_max_properties(Value, MaxProperties, State);
+               false -> State
+             end,
+  check_value(Value, Attrs, NewState);
 check_value(Value, [{?MINPROPERTIES, MinProperties} | Attrs], State) ->
-    NewState = case jesse_lib:is_json_object(Value) of
-                   true  -> check_min_properties(Value, MinProperties, State);
-                   false -> State
-               end,
-    check_value(Value, Attrs, NewState);
+  NewState = case jesse_lib:is_json_object(Value) of
+               true  -> check_min_properties(Value, MinProperties, State);
+               false -> State
+             end,
+  check_value(Value, Attrs, NewState);
 check_value(Value, [{?ALLOF, Schemas} | Attrs], State) ->
-    NewState = check_all_of(Value, Schemas, State),
-    check_value(Value, Attrs, NewState);
+  NewState = check_all_of(Value, Schemas, State),
+  check_value(Value, Attrs, NewState);
 check_value(Value, [{?ANYOF, Schemas} | Attrs], State) ->
-    NewState = check_any_of(Value, Schemas, State),
-    check_value(Value, Attrs, NewState);
+  NewState = check_any_of(Value, Schemas, State),
+  check_value(Value, Attrs, NewState);
 check_value(Value, [{?ONEOF, Schemas} | Attrs], State) ->
-    NewState = check_one_of(Value, Schemas, State),
-    check_value(Value, Attrs, NewState);
+  NewState = check_one_of(Value, Schemas, State),
+  check_value(Value, Attrs, NewState);
 check_value(Value, [{?NOT, Schema} | Attrs], State) ->
-    NewState = check_not(Value, Schema, State),
-    check_value(Value, Attrs, NewState);
-check_value(Value, [{?REF, RefSchemaURI}], State) ->
-  {NewState0, Schema} = resolve_ref(RefSchemaURI, State),
-  NewState =
-    jesse_schema_validator:validate_with_state(Schema, Value, NewState0),
-  undo_resolve_ref(NewState, State);
-check_value(_Value, [], State) ->
-  State;
+  NewState = check_not(Value, Schema, State),
+  check_value(Value, Attrs, NewState);
+check_value(Value, [], State) ->
+  maybe_external_check_value(Value, State);
 check_value(Value, [_Attr | Attrs], State) ->
   check_value(Value, Attrs, State).
 
@@ -311,7 +315,7 @@ is_type_valid(Value, ?NULL)    -> jesse_lib:is_null(Value).
 check_union_type(Value, [_ | _] = UnionType, _State) ->
   lists:any(fun(Type) -> is_type_valid(Value, Type) end, UnionType);
 check_union_type(_Value, _InvalidTypes, State) ->
-    handle_schema_invalid(?wrong_type_specification, State).
+  handle_schema_invalid(?wrong_type_specification, State).
 
 %% @private
 wrong_type(Value, State) ->
@@ -820,8 +824,10 @@ check_max_items(Value, _MaxItems, State) ->
 %%   false.
 %%
 %% @private
+check_unique_items(_, false, State) ->
+  State;
 check_unique_items([], true, State) ->
-    State;
+  State;
 check_unique_items(Value, true, State) ->
   try
     lists:foldl( fun(_Item, []) ->
@@ -940,7 +946,7 @@ check_enum(Value, Enum, State) ->
   case IsValid of
     true  -> State;
     false ->
-      handle_data_invalid(?not_in_range, Value, State)
+      handle_data_invalid(?not_in_enum, Value, State)
   end.
 
 %% @doc format
@@ -1051,7 +1057,7 @@ check_max_properties(Value, MaxProperties, State)
       false -> handle_data_invalid(?too_many_properties, Value, State)
     end;
 check_max_properties(_Value, _MaxProperties, State) ->
-    handle_schema_invalid(?wrong_max_properties, State).
+  handle_schema_invalid(?wrong_max_properties, State).
 
 %% @doc 5.4.2. minProperties
 %%
@@ -1102,7 +1108,7 @@ check_all_of(_Value, _InvalidSchemas, State) ->
   handle_schema_invalid(?wrong_all_of_schema_array, State).
 
 check_all_of_(_Value, [], State) ->
-    State;
+  State;
 check_all_of_(Value, [Schema | Schemas], State) ->
   case validate_schema(Value, Schema, State) of
     {true, NewState} -> check_all_of_(Value, Schemas, NewState);
@@ -1133,10 +1139,11 @@ check_any_of(_Value, _InvalidSchemas, State) ->
 check_any_of_(Value, [], State) ->
   handle_data_invalid(?any_schemas_not_valid, Value, State);
 check_any_of_(Value, [Schema | Schemas], State) ->
+  NumErrsBefore = length(jesse_state:get_error_list(State)),
   case validate_schema(Value, Schema, State) of
     {true, NewState} ->
-        case jesse_state:get_error_list(NewState) of
-            [] -> NewState;
+        case length(jesse_state:get_error_list(NewState)) of
+            NumErrsBefore -> NewState;
             _  -> check_any_of_(Value, Schemas, State)
         end;
     {false, _} -> check_any_of_(Value, Schemas, State)
@@ -1170,10 +1177,11 @@ check_one_of_(Value, [], State, 0) ->
 check_one_of_(Value, _Schemas, State, Valid) when Valid > 1 ->
   handle_data_invalid(?not_one_schema_valid, Value, State);
 check_one_of_(Value, [Schema | Schemas], State, Valid) ->
+  NumErrsBefore = length(jesse_state:get_error_list(State)),
   case validate_schema(Value, Schema, State) of
     {true, NewState} ->
-        case jesse_state:get_error_list(NewState) of
-            [] -> check_one_of_(Value, Schemas, NewState, Valid + 1);
+        case length(jesse_state:get_error_list(NewState)) of
+            NumErrsBefore -> check_one_of_(Value, Schemas, NewState, Valid + 1);
             _  -> check_one_of_(Value, Schemas, State, Valid)
         end;
     {false, _} ->
@@ -1220,13 +1228,30 @@ validate_schema(Value, Schema, State0) ->
     throw:Errors -> {false, Errors}
   end.
 
+%% @private
+validate_ref(Value, Reference, State) ->
+  case resolve_ref(Reference, State) of
+    {error, NewState} ->
+      undo_resolve_ref(NewState, State);
+    {ok, NewState, Schema} ->
+      ResultState =
+        jesse_schema_validator:validate_with_state(Schema, Value, NewState),
+      undo_resolve_ref(ResultState, State)
+  end.
+
 %% @doc Resolve a JSON reference
 %% The "id" keyword is taken care of behind the scenes in jesse_state.
 %% @private
 resolve_ref(Reference, State) ->
+  CurrentErrors = jesse_state:get_error_list(State),
   NewState = jesse_state:resolve_ref(State, Reference),
-  Schema = get_current_schema(NewState),
-  {NewState, Schema}.
+  NewErrors = jesse_state:get_error_list(NewState),
+  case length(CurrentErrors) =:= length(NewErrors) of
+    true ->
+      Schema = get_current_schema(NewState),
+      {ok, NewState, Schema};
+    false -> {error, NewState}
+  end.
 
 undo_resolve_ref(State, OriginalState) ->
   jesse_state:undo_resolve_ref(State, OriginalState).
@@ -1346,4 +1371,12 @@ valid_datetime(DateTimeBin) ->
       true;
     _ ->
       false
+  end.
+
+maybe_external_check_value(Value, State) ->
+  case jesse_state:get_external_validator(State) of
+    undefined ->
+      State;
+    Fun ->
+      Fun(Value, State)
   end.

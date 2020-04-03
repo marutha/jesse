@@ -20,13 +20,15 @@ Please keep in mind that the public API is the `jesse.erl` module alone.
 
 You can fire up `jesse` from the CLI, with
 ```bash
-bin/jesse path_to_json_schema -- path_to_json_instance [path_to_json_instance]
+bin/jesse [path_to_json_schema] path_to_json_schema -- path_to_json_instance [path_to_json_instance]
 ```
 
 You can also output the result in JSON format, with `--json`, and beautify it e.g. with python
 ```bash
-bin/jesse path_to_json_schema --json -- path_to_json_instance [path_to_json_instance] | python -m json.tool
+bin/jesse [path_to_json_schema] path_to_json_schema --json -- path_to_json_instance [path_to_json_instance] | python -m json.tool
 ```
+
+You can pass multiple JSON schemas which should be loaded into jesse in-memory storage, but JSON instances will be validated against the last JSON schema passed.
 
 ## Quick start - Erlang
 
@@ -53,15 +55,15 @@ There are two ways of using jesse:
 ```erlang
 1> Schema = jiffy:decode(<<"{\"items\": {\"type\": \"integer\"}}">>).
 {[{<<"items">>,{[{<<"type">>,<<"integer">>}]}}]}
-2> jesse:add_schema(some_key, Schema).
+2> jesse:add_schema("some_key", Schema).
 ok
 3> Json1 = jiffy:decode(<<"[1, 2, 3]">>).
 [1,2,3]
-4> jesse:validate(some_key, Json1).
+4> jesse:validate("some_key", Json1).
 {ok,[1,2,3]}
 5> Json2 = jiffy:decode(<<"[1, \"x\"]">>).
 [1,<<"x">>]
-6> jesse:validate(some_key, Json2).
+6> jesse:validate("some_key", Json2).
 {error,[{data_invalid,{[{<<"type">>,<<"integer">>}]},
                       wrong_type,<<"x">>,
                       [1]}]}
@@ -73,15 +75,15 @@ validation failed. See *Validation errors* below for the full error format.
 (using a callback)
 
 ```erlang
-1> jesse:add_schema(some_key,
+1> jesse:add_schema("some_key",
 1>                  <<"{\"uniqueItems\": true}">>,
 1>                  [{parser_fun, fun jiffy:decode/1}]).
 ok
-2> jesse:validate(some_key,
+2> jesse:validate("some_key",
 2>                <<"[1, 2]">>,
 2>                [{parser_fun, fun jiffy:decode/1}]).
 {ok,[1, 2]}
-3> jesse:validate(some_key,
+3> jesse:validate("some_key",
 3>                <<"[{\"foo\": \"bar\"}, {\"foo\": \"bar\"}] ">>,
 3>                [{parser_fun, fun jiffy:decode/1}]).
 {error,[{data_invalid,{[{<<"uniqueItems">>,true}]},
@@ -279,6 +281,10 @@ ErrorType}` where
   but not all of the PCRE library is interfaced"
 
   But most of common cases should work fine.
+
+* internal references (id attribute) are NOT supported
+
+  http://json-schema.org/latest/json-schema-core.html#rfc.section.8.2.1
 
 ## Contributing
 

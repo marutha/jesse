@@ -57,6 +57,13 @@ path([K | Rest], P, Default) ->
 -spec value(kvc_key(), kvc_obj(), term()) -> term().
 value(K, P, Default) ->
   case proplist_type(P) of
+    ?IF_MAPS({{map, Map}, Type} ->
+                case maps:find(normalize(K, Type), Map) of
+                  error ->
+                    Default;
+                  {ok, V} ->
+                    V
+                end;)
     {Nested, list} ->
       R = make_ref(),
       case get_nested_values(K, Nested, R) of
@@ -72,13 +79,6 @@ value(K, P, Default) ->
         {value, V} ->
           V
       end;
-    ?IF_MAPS({{map, Map}, Type} ->
-                case maps:find(normalize(K, Type), Map) of
-                  error ->
-                    Default;
-                  {ok, V} ->
-                    V
-                end;)
     {Proplist, Type} ->
       case lists:keyfind(normalize(K, Type), 1, Proplist) of
         false ->
@@ -125,12 +125,12 @@ to_proplist(T) ->
 %% @doc Unwrap data (remove mochijson2 and jiffy specific constructions,
 %% and also handle `jsx' empty objects)
 -spec unwrap_value(kvc_obj()) -> kvc_obj().
+?IF_MAPS(unwrap_value(Map) when erlang:is_map(Map) -> maps:to_list(Map);)
 unwrap_value({struct, L}) -> L;
 unwrap_value({L}) -> L;
 unwrap_value({}) -> [];
 unwrap_value([]) -> [];
 unwrap_value([{}]) -> [];
-?IF_MAPS(unwrap_value(Map) when erlang:is_map(Map) -> maps:to_list(Map);)
 unwrap_value(L) -> L.
 
 %% Internal API
@@ -293,7 +293,7 @@ normalize(K, undefined) ->
 
 -spec parse_json_pointer_token(Token :: string()) -> binary().
 parse_json_pointer_token(Token) ->
-  DecodedToken = unicode:characters_to_binary(http_uri:decode(Token)),
+  DecodedToken = unicode:characters_to_binary(hex_decode(Token)),
   lists:foldl( fun({From, To}, T) ->
                    binary:replace(T, From, To)
                end
@@ -302,3 +302,19 @@ parse_json_pointer_token(Token) ->
                , {<<"~1">>, <<"/">>}
                ]
              ).
+
+%% This implementation is based on http_uri:decode(), because there is
+%% no direct alternative inin uri_string module.
+%% cf. http://erlang.org/pipermail/erlang-questions/2020-March/099207.html
+%% @private
+hex_decode([$%, Hex1, Hex2 | Rest]) ->
+    [hex2dec(Hex1)*16 + hex2dec(Hex2) | hex_decode(Rest)];
+hex_decode([First | Rest]) ->
+    [First | hex_decode(Rest)];
+hex_decode([]) ->
+    [].
+
+%% @private
+hex2dec(X) when (X>=$0) andalso (X=<$9) -> X-$0;
+hex2dec(X) when (X>=$A) andalso (X=<$F) -> X-$A+10;
+hex2dec(X) when (X>=$a) andalso (X=<$f) -> X-$a+10.
